@@ -1,0 +1,18 @@
+# Changelog
+
+## 0.1.0 - 2026-10-11
+
+First release.
+
+- True wind (angle, speed, direction true/magnetic) from apparent wind and STW, with optional heel correction, leeway and damping
+- Ground wind angle, speed and direction
+- VMG and VMG performance against polar target VMG
+- Current set and drift (needs a compass heading)
+- Opposite tack heading and COG, including current
+- True wind statistics: average, gust, lull, mean direction, wind phase and lift
+- True wind speed scaled to a reference height
+- Start line bias from `navigation.racing.startLine*` or signalk-race-control
+- Tack loss, tacking performance and tack angle after each tack
+- Next leg bearing, distance, TWA and target speed from the active route and the live signalk-polar-builder polar (or a polar file)
+- Dead reckoning bearing and distance through the water, resettable by PUT, HTTP or race start
+- Falls back to COG as heading for boats without a compass
