@@ -1,6 +1,6 @@
 {
   "name": "signalk-wind-calculations",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Signal K plugin: true/ground wind, current, VMG performance, wind shifts, start line bias, tack loss, next leg and dead reckoning from apparent wind - feeds the B&G performance plugin.",
   "main": "index.js",
   "files": [

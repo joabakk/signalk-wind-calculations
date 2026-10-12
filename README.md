@@ -53,6 +53,8 @@ Then restart the server and enable the plugin under *Server → Plugin Config*.
 
 Heading is taken from `navigation.headingTrue`, else `headingMagnetic + magneticVariation`, else (if enabled) COG when SOG is above *min SOG*.
 
+Variation changes very slowly, so the last `navigation.magneticVariation` is used however old it is, starting from the value the server already has. If none has been received since the server started (no GPS fix), the *fallback magnetic variation* setting is used.
+
 Without a compass, everything that needs a heading uses COG instead, which ignores current and leeway, and current can't be calculated at all, since COG minus COG is always zero.
 
 The start line comes from `navigation.racing.startLineStb`/`startLinePort`, or from signalk-race-control's `racecontrol.startLine`. Which end is which is worked out from the wind direction, so the order of the ends doesn't matter. The average TWD is used when available.

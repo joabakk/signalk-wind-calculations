@@ -115,6 +115,11 @@ module.exports = function (app) {
         description: 'Needs target VMG from a polar plugin (performance.beatAngleVelocityMadeGood / gybeAngleVelocityMadeGood).',
         default: true
       },
+      magneticVariation: {
+        type: 'number',
+        title: 'Fallback magnetic variation (degrees, east positive)',
+        description: 'Used to turn a magnetic compass heading into true when navigation.magneticVariation has not been received since the server started (e.g. no GPS fix). Otherwise the last value from the bus is used, however old.'
+      },
       useCogAsHeading: {
         type: 'boolean',
         title: 'Use COG when no heading is available',
@@ -317,12 +322,22 @@ module.exports = function (app) {
     return typeof x === 'number' && Number.isFinite(x);
   }
 
+  // Variation changes by a fraction of a degree over a day's sailing, so
+  // the last value from the GPS is good however old it is; without one
+  // (no GPS fix since the server started) fall back to the configured value.
+  function magneticVariation() {
+    const v = latest['navigation.magneticVariation'];
+    if (v && isNum(v.value)) return v.value;
+    if (isNum(options.magneticVariation)) return options.magneticVariation * DEG;
+    return undefined;
+  }
+
   // { value, compass } - compass is false when COG stands in for heading
   function heading(now) {
     const hdt = fresh('navigation.headingTrue', now);
     if (isNum(hdt)) return { value: hdt, compass: true };
     const hdm = fresh('navigation.headingMagnetic', now);
-    const variation = fresh('navigation.magneticVariation', now);
+    const variation = magneticVariation();
     if (isNum(hdm) && isNum(variation)) return { value: hdm + variation, compass: true };
     if (options.useCogAsHeading) {
       const cog = fresh('navigation.courseOverGroundTrue', now);
@@ -441,7 +456,7 @@ module.exports = function (app) {
     }
 
     const { value: hdg, compass } = heading(now);
-    const variation = fresh('navigation.magneticVariation', now);
+    const variation = magneticVariation();
     const stw = fresh('navigation.speedThroughWater', now);
     const sog = fresh('navigation.speedOverGround', now);
     const cog = fresh('navigation.courseOverGroundTrue', now);
@@ -457,7 +472,9 @@ module.exports = function (app) {
     let twd;
     let current;
 
-    if (!isNum(hdg)) missing.push('heading');
+    if (!isNum(hdg)) {
+      missing.push(isNum(fresh('navigation.headingMagnetic', now)) ? 'magnetic variation (set a fallback)' : 'heading');
+    }
 
     if (isNum(stw)) {
       const t = wind.windFromApparent(aws, awa, stw, leeway);
@@ -649,6 +666,12 @@ module.exports = function (app) {
     }
     options = { ...defaults, ...opts };
     latest = {};
+    // Variation is long-lived: start from whatever the server already has
+    // rather than waiting for the GPS to send it again.
+    const knownVariation = app.getSelfPath && app.getSelfPath('navigation.magneticVariation');
+    if (knownVariation && isNum(knownVariation.value)) {
+      latest['navigation.magneticVariation'] = { value: knownVariation.value, t: Date.now() };
+    }
     lastTick = undefined;
     filters = filtersFor(options.damping, options.currentDamping);
     stats = new wind.WindowStats(options.statisticsWindow * 60 * 1000);

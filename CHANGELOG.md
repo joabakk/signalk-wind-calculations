@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.1 - 2026-10-12
+
+- Magnetic compass heading works without a live GPS: magnetic variation is no longer dropped after *max input age*. The last value is kept however old, read from the server at startup, and a fallback can be configured for when none has been received.
+- Status says "missing: magnetic variation" instead of "missing: heading" when there is a magnetic heading but no variation.
+
 ## 0.1.0 - 2026-10-11
 
 First release.
