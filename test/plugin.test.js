@@ -130,3 +130,41 @@ test('variation from the bus is used however old, and beats the fallback', async
     Date.now = realNow;
   }
 });
+
+test('warns in the status when TWA reads too wide over several tacks', async () => {
+  const DEG = Math.PI / 180;
+  const realNow = Date.now;
+  const realSetInterval = global.setInterval;
+  const realClearInterval = global.clearInterval;
+  let now = realNow();
+  const intervals = [];
+  try {
+    Date.now = () => now;
+    global.setInterval = (f, ms) => { const iv = { f, ms, next: now + ms }; intervals.push(iv); return iv; };
+    global.clearInterval = (iv) => { const i = intervals.indexOf(iv); if (i >= 0) intervals.splice(i, 1); };
+    const app = mockApp();
+    const plugin = createPlugin(app);
+    plugin.start({ updateInterval: 500, nextLeg: false, laylines: false });
+    const t0 = now;
+    while (now < t0 + 300000) {
+      now += 500;
+      const s = (now - t0) / 1000;
+      const stb = Math.floor(s / 60) % 2 === 0; // tack every 60 s
+      const real = (stb ? 40 : -40) * DEG;
+      const measured = real + Math.sign(real) * 4 * DEG; // reads 4° wide
+      const ax = 6 * Math.cos(measured) + 3;
+      const ay = 6 * Math.sin(measured);
+      app.feed('environment.wind.speedApparent', Math.hypot(ax, ay));
+      app.feed('environment.wind.angleApparent', Math.atan2(ay, ax));
+      app.feed('navigation.speedThroughWater', 3);
+      app.feed('navigation.headingTrue', (-real + 2 * Math.PI) % (2 * Math.PI));
+      for (const iv of [...intervals]) if (now >= iv.next) { iv.next += iv.ms; await iv.f(); }
+    }
+    plugin.stop();
+    assert.match(app.status, /TWA reads 4\.0° too wide upwind \(last [34] tacks\)/);
+  } finally {
+    Date.now = realNow;
+    global.setInterval = realSetInterval;
+    global.clearInterval = realClearInterval;
+  }
+});

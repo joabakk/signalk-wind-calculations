@@ -48,6 +48,12 @@ Then restart the server and enable the plugin under *Server → Plugin Config*.
 | `performance.nextLegTrueWindAngle`\* | TWA the next leg would be sailed at | next leg + TWD |
 | `performance.nextLegTargetSpeed`\* | Polar speed for the next leg, at beat/gybe angle if it must be tacked/gybed | next leg + TWD + polar |
 | `navigation.deadReckoning.bearingTrue`\* / `bearingMagnetic`\* / `distance`\* | Distance and direction sailed through the water since reset | **compass** heading, STW |
+| `performance.targetApparentAngle`\* / `targetApparentSpeed`\* | Apparent wind at the polar target TWA and speed, on the current tack | TWS, TWA + polar targets |
+| `navigation.racing.layline.distance` / `.time` | Distance and time along the ground track to the layline ahead; negative = overstood | position, TWD, next mark |
+| `navigation.racing.oppositeLayline.distance` / `.time` | Same, if you tacked (or gybed) now | position, TWD, next mark |
+| `performance.gybeLoss`\* / `gybingPerformance`\* / `gybeAngleSailed`\* | Like tack loss, for the last gybe | STW, AWA, AWS |
+| `performance.tackTwdDifference`\* / `gybeTwdDifference`\* | TWD after minus before the last tack / gybe | + heading |
+| `performance.trueWindAngleErrorUpwind`\* / `Downwind`\* | Estimated TWA error from recent tacks / gybes; positive = reads too wide | + heading |
 
 \* Not in the Signal K spec; the plugin publishes `meta` (units, description) for these.
 
@@ -67,6 +73,22 @@ A tack is TWA changing sign while upwind, with the boat settled beyond *min tack
 - **Tacking performance** = distance made / (reference VMG × window)
 
 The reference is polar-builder's target VMG (`performance.beatAngleVelocityMadeGood`) when available, else the boat's own average VMG in the 20 s before the window. Everything is measured through the water, so it works without a compass and isn't affected by current. Results are published once *post* seconds after the tack, and held until the next one.
+
+## Targets and laylines
+
+Target TWA and boat speed come from signalk-polar-builder's live `performance.beatAngle`/`gybeAngle` and `…TargetSpeed` for the current point of sail. If those aren't available, they come from the polar (see below). Target apparent wind is what you'd see sailing at those targets in the current TWS, signed for the current tack. It's the number to steer and trim to.
+
+Laylines are worked out to the course destination (the next waypoint, with or without a route). Each tack is assumed to be sailed at the target angle and speed, with current added when it's known, and distances are measured along the boat's ground track. *Layline* is the one you're sailing towards on this tack. *Opposite layline* is where you'd get to after tacking now. A negative distance means the layline is overstood. Nothing is published when the mark can be laid without tacking.
+
+## Gybe loss
+
+Gybes are detected and scored like tacks, with TWA mirrored around 180°, using the same window settings and polar-builder's gybe target VMG as reference.
+
+## Calibration check
+
+The wind doesn't change because the boat tacked. If TWA reads *e* too wide, TWD reads *+e* on starboard and *−e* on port, so it jumps by 2*e* at every tack. The plugin compares TWD in the steady sailing before and after each tack and gybe, and averages the estimate over the last few (5 by default), separately upwind and downwind. Once at least 3 agree on more than 3°, the plugin status says so, for example *TWA reads 4.0° too wide upwind (last 5 tacks)*. Real wind shifts during a tack add noise, which is why it averages.
+
+A TWA error usually means boat speed or the wind angle (upwash) needs calibrating. A TWD that's off by the same amount on both tacks doesn't show up here: that's a compass or masthead unit offset.
 
 ## Next leg
 
@@ -114,7 +136,7 @@ Paths to set in the B&G performance plugin for the fields this plugin feeds. Fie
 
 ## Conflicts
 
-`signalk-derived-data` and many instrument gateways also publish true wind and VMG. If you run one of them, turn off the matching calculation here (or set source priorities in the server), otherwise two sources will fight over the same paths.
+`signalk-derived-data` and many instrument gateways also publish true wind and VMG, and signalk-polar-builder 1.5+ publishes VMG performance (`performance.velocityMadeGoodRatio`) and `performance.optimumWindAngle`. If you run one of them, turn off the matching calculation here (or set source priorities in the server), otherwise two sources will fight over the same paths.
 
 ## Development
 

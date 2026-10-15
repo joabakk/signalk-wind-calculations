@@ -1,7 +1,7 @@
 {
   "name": "signalk-wind-calculations",
-  "version": "0.1.1",
-  "description": "Signal K plugin: true/ground wind, current, VMG performance, wind shifts, start line bias, tack loss, next leg and dead reckoning from apparent wind - feeds the B&G performance plugin.",
+  "version": "0.2.0",
+  "description": "Signal K plugin: true/ground wind, current, targets, laylines, tack and gybe loss, wind calibration check, wind shifts, start line bias, next leg and dead reckoning - feeds the B&G performance plugin.",
   "main": "index.js",
   "files": [
     "index.js",
@@ -22,7 +22,9 @@
     "sailing",
     "true wind",
     "tack loss",
-    "b&g"
+    "b&g",
+    "laylines",
+    "calibration"
   ],
   "author": "Joachim Bakke",
   "license": "ISC",

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.0 - 2026-10-15
+
+- Target apparent wind angle and speed from the polar targets (signalk-polar-builder, else the polar file)
+- Laylines to the course destination: `navigation.racing.layline` and `oppositeLayline` distance and time, using target angle and speed and current
+- Gybe loss, gybing performance and gybe angle, scored like tacks
+- Calibration check: TWD jump across tacks and gybes, averaged into an estimated TWA error upwind and downwind, with a status warning when it's consistently over 3°
+- Laylines and next leg use the course destination even without an active route
+- The polar status only shows when a value is actually waiting on the polar
+
 ## 0.1.1 - 2026-10-12
 
 - Magnetic compass heading works without a live GPS: magnetic variation is no longer dropped after *max input age*. The last value is kept however old, read from the server at startup, and a fallback can be configured for when none has been received.

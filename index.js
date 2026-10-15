@@ -16,7 +16,8 @@ const path = require('path');
 const wind = require('./lib/wind');
 const polarLib = require('./lib/polar');
 const nav = require('./lib/nav');
-const { TackDetector } = require('./lib/tack');
+const { TackDetector, gybeView } = require('./lib/tack');
+const { laylines } = require('./lib/layline');
 
 const pluginId = 'signalk-wind-calculations';
 const DEG = Math.PI / 180;
@@ -34,6 +35,11 @@ const INPUT_PATHS = [
   'navigation.attitude',
   'performance.beatAngleVelocityMadeGood',
   'performance.gybeAngleVelocityMadeGood',
+  'performance.beatAngle',
+  'performance.gybeAngle',
+  'performance.beatAngleTargetSpeed',
+  'performance.gybeAngleTargetSpeed',
+  'navigation.position',
   'navigation.racing.startLineStb',
   'navigation.racing.startLinePort',
   'racecontrol'
@@ -64,7 +70,16 @@ const CUSTOM_META = [
   { path: 'performance.nextLegTargetSpeed', units: 'm/s', description: 'Polar boat speed for the next leg (at beat/gybe angle if it has to be tacked/gybed)' },
   { path: 'navigation.deadReckoning.bearingTrue', units: 'rad', description: 'Direction of the distance sailed through the water since the last reset' },
   { path: 'navigation.deadReckoning.bearingMagnetic', units: 'rad', description: 'Dead reckoning bearing, magnetic' },
-  { path: 'navigation.deadReckoning.distance', units: 'm', description: 'Straight-line distance sailed through the water since the last reset' }
+  { path: 'navigation.deadReckoning.distance', units: 'm', description: 'Straight-line distance sailed through the water since the last reset' },
+  { path: 'performance.targetApparentAngle', units: 'rad', description: 'Apparent wind angle when sailing at the polar target TWA and speed, on the current tack' },
+  { path: 'performance.targetApparentSpeed', units: 'm/s', description: 'Apparent wind speed when sailing at the polar target TWA and speed' },
+  { path: 'performance.gybeLoss', units: 'm', description: 'Distance downwind lost in the last gybe, compared with sailing at the reference VMG' },
+  { path: 'performance.gybingPerformance', units: 'ratio', description: 'Downwind distance made during the last gybe as a fraction of the reference VMG; 1 = no loss' },
+  { path: 'performance.gybeAngleSailed', units: 'rad', description: 'Angle gybed through in the last gybe' },
+  { path: 'performance.tackTwdDifference', units: 'rad', description: 'TWD after minus TWD before the last tack; should be near 0 with calibrated instruments' },
+  { path: 'performance.gybeTwdDifference', units: 'rad', description: 'TWD after minus TWD before the last gybe' },
+  { path: 'performance.trueWindAngleErrorUpwind', units: 'rad', description: 'Estimated TWA error upwind from TWD jumps across recent tacks; positive = TWA reads too wide' },
+  { path: 'performance.trueWindAngleErrorDownwind', units: 'rad', description: 'Estimated TWA error downwind from TWD jumps across recent gybes; positive = TWA reads too wide' }
 ];
 
 module.exports = function (app) {
@@ -271,6 +286,36 @@ module.exports = function (app) {
         description: 'Needs a compass heading. Reset with a PUT to navigation.deadReckoning.reset or POST /plugins/signalk-wind-calculations/deadReckoning/reset.',
         default: true
       },
+      targetApparentWind: {
+        type: 'boolean',
+        title: 'Calculate target apparent wind angle and speed',
+        description: 'From the polar target TWA and speed (signalk-polar-builder, else the polar file).',
+        default: true
+      },
+      laylines: {
+        type: 'boolean',
+        title: 'Calculate laylines to the next mark (navigation.racing.layline / oppositeLayline)',
+        description: 'Needs position, TWD and the course destination. Uses target angle and speed, and current when known.',
+        default: true
+      },
+      gybeAnalysis: {
+        type: 'boolean',
+        title: 'Calculate gybe loss / gybing performance after each gybe',
+        description: 'Same method and windows as tack loss.',
+        default: true
+      },
+      calibrationCheck: {
+        type: 'boolean',
+        title: 'Check wind calibration from TWD before and after tacks and gybes',
+        description: 'A steady TWD jump across manoeuvres means TWA reads too wide or narrow. Needs a heading.',
+        default: true
+      },
+      calibrationManeuvers: {
+        type: 'number',
+        title: 'Tacks/gybes to average for the calibration check',
+        default: 5,
+        minimum: 1
+      },
       resetDeadReckoningAtStart: {
         type: 'boolean',
         title: 'Reset dead reckoning at the race start (signalk-race-control)',
@@ -288,6 +333,11 @@ module.exports = function (app) {
   let lastTick;
   let tacks;
   let lastTack;
+  let gybes;
+  let lastGybe;
+  let tackErrors;
+  let gybeErrors;
+  let mark;
   let polar;
   let polarStatus;
   let polarMtime;
@@ -415,6 +465,8 @@ module.exports = function (app) {
   async function refreshCourse() {
     try {
       const course = app.getCourse ? await app.getCourse() : undefined;
+      const next = course && course.nextPoint && course.nextPoint.position;
+      mark = next && isNum(next.latitude) && isNum(next.longitude) ? next : undefined;
       const route = course && course.activeRoute;
       if (!route || !route.href) {
         leg = undefined;
@@ -429,8 +481,37 @@ module.exports = function (app) {
       leg = nav.nextLeg(routeCoords, route.pointIndex, route.reverse);
     } catch (e) {
       leg = undefined;
+      mark = undefined;
       routeHref = undefined;
       debug('course lookup failed: %s', e.message);
+    }
+  }
+
+  // Polar target TWA (positive) and boat speed for the current point of
+  // sail: polar-builder's live values, else our own copy of the polar.
+  function target(now, twa, tws) {
+    const upwind = Math.abs(twa) < Math.PI / 2;
+    const angle = fresh(upwind ? 'performance.beatAngle' : 'performance.gybeAngle', now);
+    const speed = fresh(upwind ? 'performance.beatAngleTargetSpeed' : 'performance.gybeAngleTargetSpeed', now);
+    if (isNum(angle) && isNum(speed) && speed > 0) return { angle: Math.abs(angle), speed };
+    if (polar && isNum(tws)) {
+      const best = polarLib.optimumAngles(polar, tws);
+      const a = upwind ? best.beat : best.gybe;
+      const sp = a === undefined ? undefined : polarLib.polarSpeed(polar, tws, a);
+      if (isNum(sp) && sp > 0) return { angle: a, speed: sp };
+    }
+    return undefined;
+  }
+
+  function mean(arr) {
+    return arr.reduce((a, b) => a + b, 0) / arr.length;
+  }
+
+  // Keeps the last n calibration estimates from tacks or gybes.
+  function remember(list, r) {
+    if (r && isNum(r.angleError)) {
+      list.push(r.angleError);
+      while (list.length > options.calibrationManeuvers) list.shift();
     }
   }
 
@@ -595,13 +676,93 @@ module.exports = function (app) {
       }
     }
 
-    if (options.tackAnalysis && isNum(twa) && isNum(stw)) {
-      const target = fresh('performance.beatAngleVelocityMadeGood', now);
-      const r = tacks.update(now, twa, wind.velocityMadeGood(stw, twa), target);
+    if ((options.tackAnalysis || options.calibrationCheck) && isNum(twa) && isNum(stw)) {
+      const targetVmg = fresh('performance.beatAngleVelocityMadeGood', now);
+      const r = tacks.update(now, twa, wind.velocityMadeGood(stw, twa), targetVmg, twd);
       if (r) {
         lastTack = r;
+        remember(tackErrors, r);
         debug('tack: %j', r);
       }
+    }
+    if ((options.gybeAnalysis || options.calibrationCheck) && isNum(twa) && isNum(stw)) {
+      const targetVmg = fresh('performance.gybeAngleVelocityMadeGood', now);
+      const r = gybes.update(
+        now, gybeView(twa), -wind.velocityMadeGood(stw, twa),
+        isNum(targetVmg) ? Math.abs(targetVmg) : undefined, twd
+      );
+      if (r) {
+        lastGybe = r;
+        remember(gybeErrors, r);
+        debug('gybe: %j', r);
+      }
+      if (options.gybeAnalysis && lastGybe) {
+        values.push(
+          { path: 'performance.gybeLoss', value: lastGybe.loss },
+          { path: 'performance.gybingPerformance', value: lastGybe.performance },
+          { path: 'performance.gybeAngleSailed', value: lastGybe.angle }
+        );
+      }
+    }
+
+    let calibrationNote = '';
+    if (options.calibrationCheck) {
+      if (lastTack && isNum(lastTack.twdDifference)) {
+        values.push({ path: 'performance.tackTwdDifference', value: lastTack.twdDifference });
+      }
+      if (lastGybe && isNum(lastGybe.twdDifference)) {
+        values.push({ path: 'performance.gybeTwdDifference', value: lastGybe.twdDifference });
+      }
+      for (const [list, path, where, what] of [
+        [tackErrors, 'performance.trueWindAngleErrorUpwind', 'upwind', 'tacks'],
+        [gybeErrors, 'performance.trueWindAngleErrorDownwind', 'downwind', 'gybes']
+      ]) {
+        if (!list.length) continue;
+        const e = mean(list);
+        values.push({ path, value: e });
+        if (list.length >= 3 && Math.abs(e) >= 3 * DEG) {
+          calibrationNote += `; TWA reads ${Math.abs(e / DEG).toFixed(1)}° too ${e > 0 ? 'wide' : 'narrow'} ${where} (last ${list.length} ${what})`;
+        }
+      }
+    }
+
+    const tgt = isNum(twa) ? target(now, twa, tws) : undefined;
+    if (options.targetApparentWind && tgt && isNum(tws)) {
+      const side = twa < 0 ? -1 : 1;
+      const a = wind.apparentFromTrue(tws, side * tgt.angle, tgt.speed);
+      values.push(
+        { path: 'performance.targetApparentAngle', value: a.angle },
+        { path: 'performance.targetApparentSpeed', value: a.speed }
+      );
+    }
+
+    if (options.laylines && mark && isNum(twd) && isNum(twa)) {
+      const boat = fresh('navigation.position', now);
+      if (boat && isNum(boat.latitude) && isNum(boat.longitude)) {
+        const angle = tgt ? tgt.angle : Math.abs(twa);
+        const speed = tgt ? tgt.speed : stw;
+        if (isNum(speed) && speed > 0.3) {
+          const l = laylines({ boat, mark, twd, angle, speed, side: twa < 0 ? -1 : 1, current });
+          // Time to the layline ahead at the speed actually made good over
+          // the ground; the opposite one at the modelled speed after tacking.
+          const own = isNum(sog) && sog > 0.3 ? sog : undefined;
+          if (l.layline) {
+            values.push(
+              { path: 'navigation.racing.layline.distance', value: l.layline.distance },
+              { path: 'navigation.racing.layline.time', value: l.layline.distance / (own || l.layline.speed) }
+            );
+          }
+          if (l.opposite) {
+            values.push(
+              { path: 'navigation.racing.oppositeLayline.distance', value: l.opposite.distance },
+              { path: 'navigation.racing.oppositeLayline.time', value: l.opposite.distance / l.opposite.speed }
+            );
+          }
+        }
+      }
+    }
+
+    if (options.tackAnalysis && isNum(twa) && isNum(stw)) {
       if (lastTack) {
         values.push(
           { path: 'performance.tackLoss', value: lastTack.loss },
@@ -653,7 +814,11 @@ module.exports = function (app) {
       app.handleMessage(pluginId, { updates: [{ values }] });
     }
     let note = isNum(hdg) && !compass ? ' (heading from COG)' : '';
-    if (options.nextLeg && polarStatus) note += `; polar: ${polarStatus}`;
+    // Only mention the polar when something is actually waiting on it
+    const needPolar = (options.nextLeg && leg && isNum(twd)) ||
+      ((options.targetApparentWind || options.laylines) && isNum(twa) && !tgt);
+    if (needPolar && polarStatus) note += `; polar: ${polarStatus}`;
+    note += calibrationNote;
     app.setPluginStatus(
       (missing.length ? `Running, missing: ${missing.join(', ')}` : 'Running') + note
     );
@@ -681,6 +846,15 @@ module.exports = function (app) {
       postSeconds: options.tackPostSeconds
     });
     lastTack = undefined;
+    gybes = new TackDetector({
+      minAngle: options.minTackAngle * DEG,
+      preSeconds: options.tackPreSeconds,
+      postSeconds: options.tackPostSeconds
+    });
+    lastGybe = undefined;
+    tackErrors = [];
+    gybeErrors = [];
+    mark = undefined;
     leg = undefined;
     routeHref = undefined;
     raceStart = undefined;
@@ -706,7 +880,7 @@ module.exports = function (app) {
     );
 
     timer = setInterval(calculate, options.updateInterval);
-    if (options.nextLeg) {
+    if (options.nextLeg || options.laylines || options.targetApparentWind) {
       loadPolar();
       refreshCourse();
       timers.push(setInterval(loadPolar, 30000), setInterval(refreshCourse, 5000));
