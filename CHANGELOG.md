@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.1 - 2026-10-16
+
+- The calibration check only uses TWD from a compass heading. With COG standing in for heading, current and leeway shift TWD at every tack, which was counted as a wind instrument error.
+
 ## 0.2.0 - 2026-10-15
 
 - Target apparent wind angle and speed from the polar targets (signalk-polar-builder, else the polar file)

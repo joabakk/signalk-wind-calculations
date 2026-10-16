@@ -86,7 +86,7 @@ Gybes are detected and scored like tacks, with TWA mirrored around 180°, using 
 
 ## Calibration check
 
-The wind doesn't change because the boat tacked. If TWA reads *e* too wide, TWD reads *+e* on starboard and *−e* on port, so it jumps by 2*e* at every tack. The plugin compares TWD in the steady sailing before and after each tack and gybe, and averages the estimate over the last few (5 by default), separately upwind and downwind. Once at least 3 agree on more than 3°, the plugin status says so, for example *TWA reads 4.0° too wide upwind (last 5 tacks)*. Real wind shifts during a tack add noise, which is why it averages.
+The wind doesn't change because the boat tacked. If TWA reads *e* too wide, TWD reads *+e* on starboard and *−e* on port, so it jumps by 2*e* at every tack. The plugin compares TWD in the steady sailing before and after each tack and gybe, and averages the estimate over the last few (5 by default), separately upwind and downwind. Once at least 3 agree on more than 3°, the plugin status says so, for example *TWA reads 4.0° too wide upwind (last 5 tacks)*. Real wind shifts during a tack add noise, which is why it averages. It needs a compass heading: with COG standing in for heading, current and leeway shift TWD at every tack too, so no estimate is made from those tacks.
 
 A TWA error usually means boat speed or the wind angle (upwash) needs calibrating. A TWD that's off by the same amount on both tacks doesn't show up here: that's a compass or masthead unit offset.
 

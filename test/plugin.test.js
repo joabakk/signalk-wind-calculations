@@ -168,3 +168,48 @@ test('warns in the status when TWA reads too wide over several tacks', async () 
     global.clearInterval = realClearInterval;
   }
 });
+
+test('no calibration estimate when heading comes from COG', async () => {
+  const DEG = Math.PI / 180;
+  const realNow = Date.now;
+  const realSetInterval = global.setInterval;
+  const realClearInterval = global.clearInterval;
+  let now = realNow();
+  const intervals = [];
+  try {
+    Date.now = () => now;
+    global.setInterval = (f, ms) => { const iv = { f, ms, next: now + ms }; intervals.push(iv); return iv; };
+    global.clearInterval = (iv) => { const i = intervals.indexOf(iv); if (i >= 0) intervals.splice(i, 1); };
+    const app = mockApp();
+    const plugin = createPlugin(app);
+    plugin.start({ updateInterval: 500, nextLeg: false, laylines: false, useCogAsHeading: true });
+    const t0 = now;
+    while (now < t0 + 300000) {
+      now += 500;
+      const s = (now - t0) / 1000;
+      const stb = Math.floor(s / 60) % 2 === 0;
+      const twa = (stb ? 40 : -40) * DEG;
+      const ax = 6 * Math.cos(twa) + 3;
+      const ay = 6 * Math.sin(twa);
+      app.feed('environment.wind.speedApparent', Math.hypot(ax, ay));
+      app.feed('environment.wind.angleApparent', Math.atan2(ay, ax));
+      app.feed('navigation.speedThroughWater', 3);
+      // No compass; COG is pushed 5° to starboard of heading by current on both tacks
+      app.feed('navigation.speedOverGround', 3);
+      app.feed('navigation.courseOverGroundTrue', (-twa + 5 * DEG + 2 * Math.PI) % (2 * Math.PI));
+      for (const iv of [...intervals]) if (now >= iv.next) { iv.next += iv.ms; await iv.f(); }
+    }
+    plugin.stop();
+    const values = app.deltas.filter((d) => d.updates[0].values).pop().updates[0].values;
+    const paths = values.map((v) => v.path);
+    assert.ok(paths.includes('performance.tackLoss'), 'tacks still scored');
+    assert.ok(paths.includes('environment.wind.directionTrue'), 'TWD from COG still published');
+    assert.ok(!paths.includes('performance.trueWindAngleErrorUpwind'), 'no calibration from COG');
+    assert.ok(!paths.includes('performance.tackTwdDifference'));
+    assert.match(app.status, /heading from COG/);
+  } finally {
+    Date.now = realNow;
+    global.setInterval = realSetInterval;
+    global.clearInterval = realClearInterval;
+  }
+});

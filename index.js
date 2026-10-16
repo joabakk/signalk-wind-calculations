@@ -676,9 +676,14 @@ module.exports = function (app) {
       }
     }
 
+    // TWD for the calibration check only from a real compass: with COG as
+    // heading, TWD jumps across every tack by current and leeway, which
+    // would read as a wind instrument error. A manoeuvre with any sample
+    // missing TWD gets no calibration estimate.
+    const calibrationTwd = compass ? twd : undefined;
     if ((options.tackAnalysis || options.calibrationCheck) && isNum(twa) && isNum(stw)) {
       const targetVmg = fresh('performance.beatAngleVelocityMadeGood', now);
-      const r = tacks.update(now, twa, wind.velocityMadeGood(stw, twa), targetVmg, twd);
+      const r = tacks.update(now, twa, wind.velocityMadeGood(stw, twa), targetVmg, calibrationTwd);
       if (r) {
         lastTack = r;
         remember(tackErrors, r);
@@ -689,7 +694,7 @@ module.exports = function (app) {
       const targetVmg = fresh('performance.gybeAngleVelocityMadeGood', now);
       const r = gybes.update(
         now, gybeView(twa), -wind.velocityMadeGood(stw, twa),
-        isNum(targetVmg) ? Math.abs(targetVmg) : undefined, twd
+        isNum(targetVmg) ? Math.abs(targetVmg) : undefined, calibrationTwd
       );
       if (r) {
         lastGybe = r;
